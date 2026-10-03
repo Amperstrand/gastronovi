@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuse a commit that stages a capture file or a card number, token, or key.
+set -eu
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+node scripts/leak-scan.mjs . --staged
