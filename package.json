@@ -7,7 +7,11 @@
   "engines": { "node": ">=22" },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "gastronovi": "./dist/cli.js"
+  },
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
