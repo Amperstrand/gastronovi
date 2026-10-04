@@ -75,6 +75,14 @@ pickup card at the same minute), and `menu.gated` flags exactly that.
   gate is hours-dependent — empty during the recon read earlier the same
   day, full at verify time. An empty inhouse read stays a gating signal,
   never a death signal.
+- **resolver + dead unit (2026-10-04)** — the documented dead sale-code
+  for unit 248 resolves via `/code/<x>?format=json` to `unit 248,
+  live:false`; its homoglyph variant returns null (invalid-code HTML
+  re-render); `menu(248, "pickup")` solves the full PoW (13.4 s, token
+  granted) and then login-walls to **null** — challenge-success-≠-
+  liveness verified against reality. Consumer install from the npm
+  tarball (`gastronovi health` / `menu` through the `.bin` symlink)
+  live-checked the same day.
 
 ## Repo rules
 

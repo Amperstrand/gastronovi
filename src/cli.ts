@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { GastronoviClient } from "./client.js";
 import type { Menu } from "./menu.js";
@@ -138,9 +139,17 @@ export async function runCli(
   }
 }
 
-const invokedAsScript =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
-if (invokedAsScript) {
+// npm installs the bin as a .bin symlink while Node realpaths the ESM
+// entry — compare resolved paths or the CLI silently no-ops for consumers.
+function invokedAsScript(): boolean {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (invokedAsScript()) {
   process.exit(await runCli(process.argv.slice(2)));
 }
