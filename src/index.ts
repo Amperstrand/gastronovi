@@ -1,5 +1,7 @@
 export { GastronoviClient, parseCodeOrUnit, TOKEN_TTL_MS } from "./client.js";
 export type { ClientOptions } from "./client.js";
+export { GuestSessionManager } from "./guest-session.js";
+export type { GuestSession, GuestSessionPorts } from "./guest-session.js";
 export { asTransportError, GastronoviError } from "./error.js";
 export type { GastronoviFailureReason } from "./error.js";
 export { apiQuery, baseHeaders, GASTRONOVI_ORIGIN } from "./http.js";

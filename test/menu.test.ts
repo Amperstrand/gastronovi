@@ -17,9 +17,30 @@ function payload(overrides: Partial<RawMenusResponse> = {}): RawMenusResponse {
 
 describe("parsePrice", () => {
   it("parses 2-decimal and 10-decimal strings numerically (unit-dependent precision)", () => {
-    expect(parsePrice("2.50")).toBe(2.5);
-    expect(parsePrice("6.9000000000")).toBe(6.9);
-    expect(parsePrice(undefined)).toBe(0);
+    expect(parsePrice("2.50", "test")).toBe(2.5);
+    expect(parsePrice("6.9000000000", "test")).toBe(6.9);
+  });
+
+  it("rejects absent prices as platform drift", () => {
+    expect(() => parsePrice(undefined, "recipe x")).toThrow(/price/);
+    expect(() => parsePrice("6,90", "recipe x")).toThrow(/recipe x.*6,90/);
+  });
+});
+
+describe("price integrity", () => {
+  it("rejects unparseable prices loudly instead of letting NaN flow into items", () => {
+    const poisoned = payload({
+      Menusection: [{
+        id: "1900101",
+        title: "Card",
+        recipe_count: 1,
+        MenusectionContent: [
+          { id: "160020301", Recipe: { uid: "150090011", id: "7001101", title: "Item", price: "6,90" } },
+        ],
+      }],
+    });
+    expect(() => menuFromPayload(unitId("4242"), "pickup", poisoned, NOW)).toThrow(/150090011.*6,90/);
+    expect(() => menuFromPayload(unitId("4242"), "pickup", poisoned, NOW)).toThrow(/price/);
   });
 });
 

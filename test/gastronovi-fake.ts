@@ -65,6 +65,10 @@ export interface FakeGastronoviOptions {
   readonly staleChallengeOnce?: boolean;
   /** Drop every token after the first authorized menus call (401 rescue). */
   readonly killTokensAfterFirstMenus?: boolean;
+  /** Serve a challenge whose keyPrefix no small counter satisfies (pow-error lane). */
+  readonly unsolvableChallenge?: boolean;
+  /** First N submits are refused (submit-retry lane). */
+  readonly rejectSubmitOnce?: number;
 }
 
 interface SyntheticChallenge {
@@ -88,7 +92,7 @@ function passwordFor(nonceHex: string, counter: number): Buffer {
   return Buffer.concat([Buffer.from(nonceHex, "hex"), uint32be(counter)]);
 }
 
-function makeChallenge(cost: number, counter: number, nowSec: number): SyntheticChallenge {
+function makeChallenge(cost: number, counter: number, nowSec: number, unsolvable = false): SyntheticChallenge {
   const nonce = hex(randomBytes(16));
   const salt = hex(randomBytes(16));
   const derived = pbkdf2Sync(passwordFor(nonce, counter), Buffer.from(salt, "hex"), cost, 32, "sha256");
@@ -100,7 +104,7 @@ function makeChallenge(cost: number, counter: number, nowSec: number): Synthetic
       keyLength: 32,
       nonce,
       salt,
-      keyPrefix: hex(derived).slice(0, 32),
+      keyPrefix: unsolvable ? "0".repeat(32) : hex(derived).slice(0, 32),
       keySignature: hex(randomBytes(32)),
     },
     signature: hex(randomBytes(32)),
@@ -167,6 +171,13 @@ function content(id: string, sectionId: string, recipe: ReturnType<typeof recipe
   return { id, menusection_id: sectionId, menu_number: "", highlight: false, Recipe: recipe };
 }
 
+/** Fixture lookup: a missing uid is a broken fixture, not an optional value. */
+function recipeAt(map: Readonly<Record<string, ReturnType<typeof recipe>>>, uid: string): ReturnType<typeof recipe> {
+  const found = map[uid];
+  if (found === undefined) throw new Error(`fixture recipe missing: ${uid}`);
+  return found;
+}
+
 function kioskPickupPayload(nowSec: number): Record<string, unknown> {
   const recipes = kioskRecipes();
   return envelope(nowSec, {
@@ -186,27 +197,27 @@ function kioskPickupPayload(nowSec: number): Record<string, unknown> {
                 id: "1900103",
                 title: "Fass",
                 MenusectionContent: [
-                  content("160020301", "1900103", recipes["150090011"]!),
-                  content("160020302", "1900103", recipes["150090012"]!),
+                  content("160020301", "1900103", recipeAt(recipes, "150090011")),
+                  content("160020302", "1900103", recipeAt(recipes, "150090012")),
                 ],
               },
               {
                 id: "1900104",
                 title: "Flaschen",
-                MenusectionContent: [content("160020303", "1900104", recipes["150090042"]!)],
+                MenusectionContent: [content("160020303", "1900104", recipeAt(recipes, "150090042"))],
               },
             ],
           },
           {
             id: "1900105",
             title: "Snacks",
-            MenusectionContent: [content("160020304", "1900105", recipes["150090031"]!)],
+            MenusectionContent: [content("160020304", "1900105", recipeAt(recipes, "150090031"))],
           },
           {
             id: "1900106",
             title: "Auslauf",
             recipe_count: 0,
-            MenusectionContent: [content("160020305", "1900106", recipes["150090021"]!)],
+            MenusectionContent: [content("160020305", "1900106", recipeAt(recipes, "150090021"))],
           },
         ],
       },
@@ -243,14 +254,14 @@ function barPayload(nowSec: number): Record<string, unknown> {
         title: "Synthetic Bar",
         recipe_count: 3,
         MenusectionContent: [
-          content("160020401", "1900201", recipes["150090051"]!),
-          content("160020402", "1900201", recipes["150090052"]!),
+          content("160020401", "1900201", recipeAt(recipes, "150090051")),
+          content("160020402", "1900201", recipeAt(recipes, "150090052")),
         ],
         Menusection: [
           {
             id: "1900202",
             title: "Mehr",
-            MenusectionContent: [content("160020403", "1900202", recipes["150090053"]!)],
+            MenusectionContent: [content("160020403", "1900202", recipeAt(recipes, "150090053"))],
           },
         ],
       },
@@ -290,6 +301,7 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
   const tokenTtl = options.tokenTtlMs ?? 600_000;
   const tokens = new Map<string, number>();
   let challengeCalls = 0;
+  let submitCalls = 0;
   let menusAuthorizedCalls = 0;
   let tokenSerial = 0;
 
@@ -336,9 +348,9 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
       if (options.challenge429 !== undefined && challengeCalls <= options.challenge429) {
         return new Response("", { status: 429 });
       }
-      let challenge = makeChallenge(cost, counter, nowSec);
+      let challenge = makeChallenge(cost, counter, nowSec, options.unsolvableChallenge === true);
       if (options.staleChallengeOnce === true && challengeCalls === 1) {
-        challenge = makeChallenge(cost, counter, nowSec - 1200);
+        challenge = makeChallenge(cost, counter, nowSec - 1200, options.unsolvableChallenge === true);
       }
       return jsonResponse(envelope(nowSec, {
         activeRoute: "defaultGuestSession",
@@ -347,6 +359,7 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
     }
 
     if (method === "POST" && path === "/guestsession/submitchallenge") {
+      submitCalls += 1;
       const form = new URLSearchParams(typeof body === "string" ? body : "");
       const solveduration = url.searchParams.get("solveduration");
       const param = (field: string): string => form.get(`challenge[parameters][${field}]`) ?? "";
@@ -369,6 +382,9 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
       const valid = derived === postedKey && derived.startsWith(prefix);
       if (!valid) {
         return jsonResponse(envelope(nowSec, { success: false, messages: [{ text: "bad solution", status: "failed" }] }));
+      }
+      if (options.rejectSubmitOnce !== undefined && submitCalls <= options.rejectSubmitOnce) {
+        return jsonResponse(envelope(nowSec, { success: false, messages: [{ text: "not now", status: "failed" }] }));
       }
       tokenSerial += 1;
       const token = `synthetic-guest-token-${tokenSerial}`;

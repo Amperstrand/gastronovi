@@ -1,33 +1,11 @@
 import { GastronoviError } from "./error.js";
-import { apiQuery, baseHeaders, fetchJson, GASTRONOVI_ORIGIN, hostCookie, type FetchJsonResult } from "./http.js";
+import { GuestSessionManager, TOKEN_TTL_MS, type GuestSession } from "./guest-session.js";
+import { baseHeaders, fetchJson, GASTRONOVI_ORIGIN, postForm } from "./http.js";
 import { menuFromPayload, type Menu, type RawMenusResponse } from "./menu.js";
-import { nodeHasher, solveAltcha, type AltchaChallenge, type AltchaSolution, type Pbkdf2Hasher } from "./pow.js";
+import type { Pbkdf2Hasher } from "./pow.js";
 import { orderMode, unitId, type OrderMode, type Unit, type UnitId } from "./types.js";
 
-/** Guest-token lifetime: measured valid at t+10 min, 401 at t+15 min — re-solve at 10. */
-export const TOKEN_TTL_MS = 10 * 60 * 1000;
-const CSRF_COOKIE = "__Host-csrf_token";
-const CHALLENGE_LIVE_MARGIN_MS = 5_000;
-
-interface GuestSession {
-  readonly token: string;
-  readonly cookie: string | null;
-  readonly expiresAtMs: number;
-}
-
-interface RawToken {
-  readonly value?: string;
-}
-
-interface RawChallengeEnvelope {
-  readonly success?: boolean;
-  readonly challenge?: AltchaChallenge;
-}
-
-interface RawSubmitEnvelope {
-  readonly success?: boolean;
-  readonly token?: string | RawToken;
-}
+export { TOKEN_TTL_MS };
 
 interface RawInformationEnvelope {
   readonly success?: boolean;
@@ -53,6 +31,8 @@ export interface ClientOptions {
   readonly tokenTtlMs?: number;
   /** Backoff before the single 429 retry (the widget backs off 5–10 s). */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Upper counter bound for the PoW linear scan (default 2^22). */
+  readonly scanBound?: number;
 }
 
 type CodeOrUnit = { readonly kind: "id"; readonly id: string } | { readonly kind: "code"; readonly code: string };
@@ -80,25 +60,29 @@ export function parseCodeOrUnit(input: string): CodeOrUnit | null {
   return null;
 }
 
-function network(context: string, body: string): GastronoviError {
-  return new GastronoviError("network", `${context}: ${body}`);
-}
-
-function sleepDefault(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
- * Read-only GastroNova client. A thrown GastronoviError (reason
- * "network") means the platform was unreachable; a null return always
- * means the platform answered and the thing is absent (invalid code,
- * deactivated unit behind the login wall). An EMPTY menu is data, not
- * absence: inhouse without a table code is mode-gated, not dead.
+ * Read-only GastroNova client. A thrown GastronoviError (reasons
+ * "network" / "pow" / "parse") means the platform was unreachable or its
+ * protocol drifted; a null return always means the platform answered and
+ * the thing is absent (invalid code, deactivated unit behind the login
+ * wall). An EMPTY menu is data, not absence: inhouse without a table
+ * code is mode-gated, not dead.
  */
 export class GastronoviClient {
-  private readonly sessions = new Map<UnitId, GuestSession>();
+  private readonly sessions: GuestSessionManager;
+  private readonly now: () => Date;
 
-  constructor(private readonly options: ClientOptions = {}) {}
+  constructor(private readonly options: ClientOptions = {}) {
+    this.now = options.now ?? (() => new Date());
+    this.sessions = new GuestSessionManager({
+      now: this.now,
+      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+      ...(options.hasher === undefined ? {} : { hasher: options.hasher }),
+      ...(options.tokenTtlMs === undefined ? {} : { tokenTtlMs: options.tokenTtlMs }),
+      ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
+      ...(options.scanBound === undefined ? {} : { scanBound: options.scanBound }),
+    });
+  }
 
   /** Resolves a code/URL/id to a unit, then runs the cookieless health check. */
   async unit(codeOrUrl: string): Promise<Unit | null> {
@@ -126,11 +110,7 @@ export class GastronoviClient {
     if (payload === null || payload.success !== true || this.messageModel(payload) === "login") {
       return null;
     }
-    return menuFromPayload(id, mode, payload, this.nowDate());
-  }
-
-  private nowDate(): Date {
-    return (this.options.now ?? (() => new Date()))();
+    return menuFromPayload(id, mode, payload, this.now());
   }
 
   private async resolveInput(codeOrUnit: string | UnitId): Promise<UnitId | null> {
@@ -153,7 +133,9 @@ export class GastronoviClient {
       signal: AbortSignal.timeout(20_000),
     }, this.options.fetchImpl);
     if (!result.ok) {
-      if (result.kind === "network") throw network("code resolve failed", result.body);
+      if (result.kind === "network") {
+        throw new GastronoviError("network", `code resolve failed: ${result.body}`);
+      }
       return null;
     }
     const target = result.value.redirect?.target;
@@ -163,9 +145,14 @@ export class GastronoviClient {
   }
 
   private async healthOf(id: UnitId): Promise<Unit> {
-    const result = await this.postJson<RawInformationEnvelope>(id, "/reservations/information", {});
+    const result = await postForm<RawInformationEnvelope>(
+      { unit: id, path: "/reservations/information", params: {} },
+      this.options.fetchImpl,
+    );
     if (!result.ok) {
-      if (result.kind === "network") throw network("health check failed", result.body);
+      if (result.kind === "network") {
+        throw new GastronoviError("network", `health check failed: ${result.body}`);
+      }
       return { id, live: false, pickup: false, inhouse: false, minOrderValue: null };
     }
     const settings = result.value.CompanySettings;
@@ -182,17 +169,17 @@ export class GastronoviClient {
   }
 
   private async orderingMenus(id: UnitId, mode: OrderMode): Promise<RawMenusResponse | null> {
-    let result = await this.menusWithSession(id, mode, await this.guestSession(id));
+    let result = await this.menusWithSession(id, mode, await this.sessions.acquire(id));
     if (this.refused(result)) {
-      this.sessions.delete(id);
-      result = await this.menusWithSession(id, mode, await this.guestSession(id));
+      this.sessions.invalidate(id);
+      result = await this.menusWithSession(id, mode, await this.sessions.acquire(id));
       if (this.refused(result)) return null;
     }
     return result.ok ? result.value : null;
   }
 
   /** Token refusal signature: HTTP 401 or the GuestSession envelope model. */
-  private refused(result: FetchJsonResult<RawMenusResponse>): boolean {
+  private refused(result: Awaited<ReturnType<GastronoviClient["menusWithSession"]>>): boolean {
     return !result.ok
       ? result.kind === "http" && result.status === 401
       : this.messageModel(result.value) === "GuestSession";
@@ -202,109 +189,18 @@ export class GastronoviClient {
     id: UnitId,
     mode: OrderMode,
     session: GuestSession,
-  ): Promise<FetchJsonResult<RawMenusResponse>> {
-    return await this.postJson<RawMenusResponse>(id, "/ordering/menus", {
-      time: String(Math.floor(this.nowDate().getTime() / 1000)),
-      type: mode,
-      stripHtml: "1",
-      completeDay: "1",
-    }, {
-      "x-csrf-token": session.token,
-      ...(session.cookie === null ? {} : { cookie: session.cookie }),
-    });
-  }
-
-  /** One-time PoW per token window: challenge → linear-scan solve → submit. */
-  private async guestSession(id: UnitId): Promise<GuestSession> {
-    const nowMs = (): number => this.nowDate().getTime();
-    const cached = this.sessions.get(id);
-    if (cached !== undefined && nowMs() < cached.expiresAtMs) return cached;
-
-    let challenge = await this.liveChallenge(id);
-    let solution: AltchaSolution | null = null;
-    if (challenge !== null) {
-      solution = await solveAltcha(challenge, this.options.hasher ?? nodeHasher(), { now: nowMs });
-    }
-    if (solution === null) {
-      // Widget-grade retry: one fresh challenge before giving up.
-      challenge = await this.liveChallenge(id);
-      if (challenge !== null) {
-        solution = await solveAltcha(challenge, this.options.hasher ?? nodeHasher(), { now: nowMs });
-      }
-    }
-    if (challenge === null) throw new Error(`guest session: no live challenge for unit ${id}`);
-    if (solution === null) throw new Error(`guest session: proof-of-work unsolved for unit ${id}`);
-
-    const token = await this.submitSolution(id, challenge, solution);
-    const session: GuestSession = {
-      token: token.token,
-      cookie: `${CSRF_COOKIE}=${token.cookieValue ?? token.token}`,
-      expiresAtMs: nowMs() + (this.options.tokenTtlMs ?? TOKEN_TTL_MS),
-    };
-    this.sessions.set(id, session);
-    return session;
-  }
-
-  /**
-   * Fetches a challenge that is still solvable: the 600 s expiry is
-   * checked on arrival, and a stale one triggers one refetch.
-   */
-  private async liveChallenge(id: UnitId): Promise<AltchaChallenge | null> {
-    const first = await this.fetchChallenge(id);
-    if (first === null) return null;
-    if (first.parameters.expiresAt * 1000 > this.nowDate().getTime() + CHALLENGE_LIVE_MARGIN_MS) {
-      return first;
-    }
-    const second = await this.fetchChallenge(id);
-    return second !== null && second.parameters.expiresAt * 1000 > this.nowDate().getTime() + CHALLENGE_LIVE_MARGIN_MS
-      ? second
-      : null;
-  }
-
-  private async fetchChallenge(id: UnitId): Promise<AltchaChallenge | null> {
-    const result = await this.postJsonRetry429<RawChallengeEnvelope>(id, "/guestsession/challenge", {});
-    if (!result.ok) {
-      if (result.kind === "network") throw network("challenge fetch failed", result.body);
-      return null;
-    }
-    const challenge = result.value.challenge;
-    if (result.value.success !== true || challenge?.parameters === undefined) return null;
-    return challenge;
-  }
-
-  private async submitSolution(
-    id: UnitId,
-    challenge: AltchaChallenge,
-    solution: AltchaSolution,
-  ): Promise<{ readonly token: string; readonly cookieValue: string | null }> {
-    const body = new URLSearchParams();
-    const p = challenge.parameters;
-    const fields: readonly (keyof typeof p)[] = [
-      "algorithm", "cost", "expiresAt", "keyLength", "keyPrefix", "keySignature", "nonce", "salt",
-    ];
-    for (const field of fields) {
-      body.set(`challenge[parameters][${field}]`, String(p[field]));
-    }
-    body.set("challenge[signature]", challenge.signature);
-    body.set("solution[counter]", String(solution.counter));
-    body.set("solution[derivedKey]", solution.derivedKey);
-    body.set("solution[time]", String(solution.timeMs));
-
-    const result = await this.postJsonRetry429<RawSubmitEnvelope>(
-      id,
-      "/guestsession/submitchallenge",
-      body,
-      { solveduration: String(solution.timeMs) },
-    );
-    if (!result.ok) {
-      if (result.kind === "network") throw network("challenge submit failed", result.body);
-      throw new Error(`guest session: submit refused for unit ${id} (${result.status})`);
-    }
-    if (result.value.success !== true) throw new Error(`guest session: submit rejected for unit ${id}`);
-    const raw = result.value.token;
-    const token = typeof raw === "string" ? raw : raw?.value;
-    if (token === undefined || token === "") throw new Error(`guest session: no token for unit ${id}`);
-    return { token, cookieValue: hostCookie(result.cookie, CSRF_COOKIE) };
+  ): Promise<Awaited<ReturnType<typeof postForm<RawMenusResponse>>>> {
+    return await postForm<RawMenusResponse>({
+      unit: id,
+      path: "/ordering/menus",
+      params: {
+        time: String(Math.floor(this.now().getTime() / 1000)),
+        type: mode,
+        stripHtml: "1",
+        completeDay: "1",
+      },
+      headers: { "x-csrf-token": session.token, cookie: session.cookie },
+    }, this.options.fetchImpl);
   }
 
   private messageModel(payload: RawMenusResponse): string | null {
@@ -312,41 +208,5 @@ export class GastronoviClient {
       if (message.model !== undefined) return message.model;
     }
     return null;
-  }
-
-  private async postJson<T>(
-    id: UnitId,
-    path: string,
-    params: URLSearchParams | Readonly<Record<string, string>>,
-    headers: Record<string, string> = {},
-    query: Readonly<Record<string, string>> = {},
-  ): Promise<ReturnType<typeof fetchJson<T>>> {
-    const url = `${GASTRONOVI_ORIGIN}${path}?${apiQuery(id, query)}`;
-    const body = params instanceof URLSearchParams ? params.toString() : new URLSearchParams(params).toString();
-    return await fetchJson<T>(url, {
-      method: "POST",
-      headers: {
-        ...baseHeaders(null),
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        ...headers,
-      },
-      body,
-      signal: AbortSignal.timeout(90_000),
-    }, this.options.fetchImpl);
-  }
-
-  /** The widget backs off 5–10 s on 429; one retry keeps reads polite. */
-  private async postJsonRetry429<T>(
-    id: UnitId,
-    path: string,
-    params: URLSearchParams | Readonly<Record<string, string>>,
-    query: Readonly<Record<string, string>> = {},
-  ): Promise<ReturnType<typeof fetchJson<T>>> {
-    const result = await this.postJson<T>(id, path, params, {}, query);
-    if (!result.ok && result.kind === "http" && result.status === 429) {
-      await (this.options.sleep ?? sleepDefault)(5_000);
-      return await this.postJson<T>(id, path, params, {}, query);
-    }
-    return result;
   }
 }

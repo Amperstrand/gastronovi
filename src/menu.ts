@@ -1,3 +1,4 @@
+import { GastronoviError } from "./error.js";
 import type { OrderMode, UnitId } from "./types.js";
 
 /**
@@ -121,13 +122,20 @@ function stockByRecipeId(
   return map;
 }
 
+const DECIMAL_STRING = /^\d+(?:\.\d+)?$/;
+
 /**
  * Prices are decimal strings with unit-dependent precision ("2.50" and
- * "6.9000000000" can appear in one response). Parse numerically — never
- * slice or pad strings.
+ * "6.9000000000" can appear in one response). The wire format is strict:
+ * digits, optional dot, digits — anything else (comma decimals, currency
+ * signs, absent) is platform drift and fails loudly (reason "parse")
+ * naming the recipe. parseFloat alone would silently read "6,90" as 6.
  */
-export function parsePrice(raw: string | undefined): number {
-  return Number.parseFloat(raw ?? "0");
+export function parsePrice(raw: string | undefined, subject: string): number {
+  if (raw === undefined || !DECIMAL_STRING.test(raw)) {
+    throw new GastronoviError("parse", `${subject}: unparseable price "${raw ?? ""}"`);
+  }
+  return Number.parseFloat(raw);
 }
 
 function itemFromContent(
@@ -146,8 +154,8 @@ function itemFromContent(
     contentId: content.id ?? null,
     title: recipe.title ?? recipe.uid ?? "",
     description: recipe.description ?? null,
-    price: parsePrice(recipe.price),
-    priceRaw: recipe.price ?? "0",
+    price: parsePrice(recipe.price, `recipe ${recipe.uid ?? "?"}`),
+    priceRaw: recipe.price ?? "",
     amountDescription: recipe.amount_description ?? null,
     currency,
     available,

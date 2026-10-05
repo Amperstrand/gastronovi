@@ -85,3 +85,33 @@ export async function fetchJson<T>(
     return { ok: false, kind: "parse", status: response.status, body: text.slice(0, 500) };
   }
 }
+
+export interface FormPost {
+  readonly unit: string;
+  readonly path: string;
+  readonly params: URLSearchParams | Readonly<Record<string, string>>;
+  readonly headers?: Record<string, string>;
+  readonly query?: Readonly<Record<string, string>>;
+}
+
+/** jQuery-era form POST in the platform's API-query envelope. */
+export async function postForm<T>(
+  post: FormPost,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 90_000,
+): Promise<FetchJsonResult<T>> {
+  const url = `${GASTRONOVI_ORIGIN}${post.path}?${apiQuery(post.unit, post.query ?? {})}`;
+  const body = post.params instanceof URLSearchParams
+    ? post.params.toString()
+    : new URLSearchParams(post.params).toString();
+  return await fetchJson<T>(url, {
+    method: "POST",
+    headers: {
+      ...baseHeaders(null),
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      ...(post.headers ?? {}),
+    },
+    body,
+    signal: AbortSignal.timeout(timeoutMs),
+  }, fetchImpl);
+}

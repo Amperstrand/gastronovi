@@ -92,3 +92,13 @@ the wire contract, and stay leak-gate clean.
   transport failure; the http layer needs a third `parse` failure kind.
 - 429s carry a server-tracked retry budget (the widget backs off 5–10 s
   ×3); the client does one polite retry and the fake counts the calls.
+- `parseFloat` is not a price parser: it reads `"6,90"` as 6 and returns
+  6 for garbage with a numeric prefix — silently wrong is worse than
+  NaN. The boundary must strict-match the documented wire format
+  (digits, optional dot, digits) and throw naming the record on drift;
+  a NaN-check alone passes the comma test and ships the bug.
+- Solver exhaustion and refused submits are typed failures ("pow"), not
+  bare Errors — callers discriminate protocol drift from transport
+  death. The fake needs an unsolvable-keyPrefix mode and a
+  reject-first-N-submits mode, and the client needs a pluggable
+  scanBound or the exhaustion lane takes minutes to test.

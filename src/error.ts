@@ -1,10 +1,10 @@
-/**
- * Transport-level failure (network down, DNS, timeout). A thrown
- * GastronoviError always means "we could not talk to the platform"; a null
- * return from a client method always means "the platform answered: absent"
- * (invalid code, login-walled dead unit, no menu).
- */
-export type GastronoviFailureReason = "network";
+export type GastronoviFailureReason =
+  /** We could not talk to the platform (down, DNS, timeout). */
+  | "network"
+  /** The ALTCHA guest-session protocol failed us: no live challenge, unsolvable within the scan bound, or submit refused. */
+  | "pow"
+  /** The platform answered with a payload we cannot parse faithfully (e.g. a non-decimal price string). */
+  | "parse";
 
 export class GastronoviError extends Error {
   constructor(readonly reason: GastronoviFailureReason, message: string) {

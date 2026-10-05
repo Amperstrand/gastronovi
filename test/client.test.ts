@@ -20,13 +20,14 @@ function clock(start = CLOCK_START): { ms: number } {
 function client(
   fetchImpl: typeof fetch,
   time: { ms: number },
-  extra: { tokenTtlMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+  extra: { tokenTtlMs?: number; sleep?: (ms: number) => Promise<void>; scanBound?: number } = {},
 ): GastronoviClient {
   return new GastronoviClient({
     fetchImpl,
     now: () => new Date(time.ms),
     ...(extra.tokenTtlMs === undefined ? {} : { tokenTtlMs: extra.tokenTtlMs }),
     ...(extra.sleep === undefined ? {} : { sleep: extra.sleep }),
+    ...(extra.scanBound === undefined ? {} : { scanBound: extra.scanBound }),
   });
 }
 
@@ -272,6 +273,28 @@ describe("menu", () => {
     await expect(client(dead, clock()).menu(LIVE_KIOSK_CODE, "pickup")).rejects.toMatchObject({
       name: "GastronoviError",
       reason: "network",
+    });
+  });
+
+  it("throws a typed pow error when no counter within the scan bound solves", async () => {
+    const time = clock();
+    const transport = fake(time, { unsolvableChallenge: true });
+    await expect(
+      client(transport.fetchImpl, time, { scanBound: 50 }).menu(LIVE_KIOSK_CODE, "pickup"),
+    ).rejects.toMatchObject({ name: "GastronoviError", reason: "pow" });
+  });
+
+  it("retries once with a fresh challenge when the submit is refused, then throws typed pow", async () => {
+    const time = clock();
+    const transport = fake(time, { rejectSubmitOnce: true });
+    const menu = await client(transport.fetchImpl, time).menu(LIVE_KIOSK_CODE, "pickup");
+    expect(menu?.categories.length).toBeGreaterThan(0);
+    expect(transport.requests.filter((request) => request.url.includes("/guestsession/submitchallenge"))).toHaveLength(2);
+
+    const always = fake(time, { rejectSubmitOnce: Number.MAX_SAFE_INTEGER });
+    await expect(client(always.fetchImpl, time).menu(LIVE_KIOSK_CODE, "pickup")).rejects.toMatchObject({
+      name: "GastronoviError",
+      reason: "pow",
     });
   });
 });

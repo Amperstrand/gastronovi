@@ -33,12 +33,18 @@ npx gastronovi menu 96153 --mode inhouse
 
 ## Error semantics
 
-A thrown `GastronoviError` (reason `"network"`) means the platform was
-unreachable. A `null` return always means the platform answered and the
-thing is absent — invalid code, or a deactivated unit behind the login
-wall. An **empty** menu is data, not absence: `inhouse` without a table
-code is mode-gated (unit 96153 serves an empty inhouse card and a full
-pickup card at the same minute), and `menu.gated` flags exactly that.
+A thrown `GastronoviError` carries a reason: `"network"` (platform
+unreachable), `"pow"` (the ALTCHA guest-session protocol failed us — no
+live challenge, unsolvable within the configurable `scanBound`, or submit
+refused; protocol drift or an exhausted budget), or `"parse"` (the
+platform answered with a payload we cannot parse faithfully — e.g. a
+price that is not a strict decimal string; `parsePrice` fails loudly
+naming the recipe rather than letting `parseFloat` silently read `"6,90"`
+as 6). A `null` return always means the platform answered and the thing
+is absent — invalid code, or a deactivated unit behind the login wall. An
+**empty** menu is data, not absence: `inhouse` without a table code is
+mode-gated (unit 96153 serves an empty inhouse card and a full pickup
+card at the same minute), and `menu.gated` flags exactly that.
 
 ## What the client encodes
 
