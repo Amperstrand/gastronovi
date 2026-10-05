@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GastronoviClient, GastronoviError, parseCodeOrUnit } from "../src/index.js";
 import { unitId } from "../src/types.js";
 import {
+  BOUND_TABLE_CODE,
   DEAD_CODE,
   DEAD_UNIT,
   fakeGastronovi,
@@ -264,6 +265,41 @@ describe("menu", () => {
     const menu = await client(transport.fetchImpl, time).menu(unitId(LIVE_BAR_UNIT), "pickup");
     expect(menu?.unit).toBe(LIVE_BAR_UNIT);
     expect(transport.requests.some((request) => request.url.includes("/code/"))).toBe(false);
+  });
+
+  it("binds a table code: costunit-selected cards replace the no-code set", async () => {
+    const time = clock();
+    const transport = fake(time);
+    const menu = await client(transport.fetchImpl, time).menu(LIVE_KIOSK_CODE, "inhouse", { tableCode: BOUND_TABLE_CODE });
+    const menus = sent(transport.requests, "/ordering/menus");
+    if (typeof menus?.body === "string") {
+      expect(new URLSearchParams(menus.body).get("tableCode")).toBe(BOUND_TABLE_CODE);
+    } else {
+      expect.unreachable("menus body must be a urlencoded string");
+    }
+    expect(menu?.tableIdValid).toBe(true);
+    expect(menu?.categories.map((category) => category.name)).toEqual(["Tischkarte"]);
+    const bound = menu?.categories.flatMap((category) => category.items) ?? [];
+    expect(bound.map((item) => item.title)).toContain("Synthetic Kommunikation");
+    // The no-code default (kiosk cards) is replaced entirely.
+    expect(menu?.categories.some((category) => category.name === "Fass")).toBe(false);
+  });
+
+  it("reports an invalid table binding as data (tableIdValid false), not absence", async () => {
+    const time = clock();
+    const transport = fake(time);
+    const menu = await client(transport.fetchImpl, time).menu(LIVE_KIOSK_CODE, "pickup", { tableCode: "TWRONGCODE0" });
+    expect(menu).not.toBeNull();
+    expect(menu?.tableIdValid).toBe(false);
+    // The platform still serves the no-code fallback card set.
+    expect(menu?.categories.map((category) => category.name)).toEqual(["Fass", "Flaschen", "Snacks"]);
+  });
+
+  it("leaves tableIdValid null when no table code is sent (tri-state wire field)", async () => {
+    const time = clock();
+    const transport = fake(time);
+    const menu = await client(transport.fetchImpl, time).menu(LIVE_KIOSK_CODE, "pickup");
+    expect(menu?.tableIdValid).toBeNull();
   });
 
   it("throws a typed network error when the transport dies mid-chain", async () => {

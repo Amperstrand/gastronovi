@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
-import { DEAD_CODE, fakeGastronovi, LIVE_KIOSK_CODE } from "./gastronovi-fake.js";
+import { BOUND_TABLE_CODE, DEAD_CODE, fakeGastronovi, LIVE_KIOSK_CODE } from "./gastronovi-fake.js";
 
 function ports(lines: string[], errors: string[]) {
   return {
@@ -67,6 +67,18 @@ describe("runCli", () => {
     const netErrors: string[] = [];
     expect(await runCli(["health", LIVE_KIOSK_CODE], { ...ports([], netErrors), fetchImpl: dead })).toBe(1);
     expect(netErrors[0]).toContain("fetch failed");
+  });
+
+  it("binds a table code via --table and prints the bound card set", async () => {
+    const transport = fakeGastronovi();
+    const lines: string[] = [];
+    const code = await runCli(
+      ["menu", LIVE_KIOSK_CODE, "--mode", "inhouse", "--table", BOUND_TABLE_CODE],
+      { ...ports(lines, []), fetchImpl: transport.fetchImpl },
+    );
+    expect(code).toBe(0);
+    expect(lines.join("\n")).toContain("Tischkarte");
+    expect(lines.join("\n")).toContain("table binding: valid");
   });
 
   it("prints usage on help and unknown commands", async () => {

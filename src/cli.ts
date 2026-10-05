@@ -22,6 +22,7 @@ commands:
   health <code>              resolve + cookieless liveness check (no PoW)
   menu <code> [--mode m]     read the menu card set (solves the PoW once)
                              --mode pickup (default) | inhouse
+  --table <Tcode>            bind the read to a table's costunit catalog
 
 <code> is a unit id (7960), a services.gastronovi.com URL, or a table /
 sale capability code. Worked examples: 7960 (BRLO BRWHOUSE), 96153 (BRLO
@@ -45,6 +46,9 @@ function printUnit(unit: Unit, out: (line: string) => void): void {
 
 function printMenu(menu: Menu, out: (line: string) => void): void {
   out(`unit ${menu.unit} — ${menu.mode} — ${menu.categories.length} card(s), ${menu.stockRows} stock rows (${menu.updatedAt})`);
+  if (menu.tableIdValid !== null) {
+    out(`  table binding: ${menu.tableIdValid ? "valid" : "INVALID — showing the no-code fallback cards"}`);
+  }
   if (menu.gated) {
     out(`  (no cards in this mode — inhouse is gated without a table code; try --mode pickup)`);
     return;
@@ -63,12 +67,14 @@ interface ParsedArgs {
   readonly command: string | undefined;
   readonly target: string | undefined;
   readonly mode: "pickup" | "inhouse";
+  readonly tableCode: string | undefined;
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs | null {
   let command: string | undefined;
   let target: string | undefined;
   let mode: "pickup" | "inhouse" = "pickup";
+  let tableCode: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === undefined) break;
@@ -79,11 +85,18 @@ function parseArgs(argv: readonly string[]): ParsedArgs | null {
       i += 1;
       continue;
     }
+    if (arg === "--table") {
+      const value = argv[i + 1];
+      if (value === undefined || value === "") return null;
+      tableCode = value;
+      i += 1;
+      continue;
+    }
     if (command === undefined) command = arg;
     else if (target === undefined) target = arg;
     else return null;
   }
-  return { command, target, mode };
+  return { command, target, mode, tableCode };
 }
 
 export async function runCli(
@@ -96,7 +109,7 @@ export async function runCli(
     ports.err(USAGE);
     return 1;
   }
-  const { command, target, mode } = args;
+  const { command, target, mode, tableCode } = args;
   if (command === undefined || command === "help" || command === "-h" || command === "--help") {
     ports.out(USAGE);
     return 0;
@@ -126,7 +139,7 @@ export async function runCli(
       ports.err(`unit ${unit.id} is deactivated — menus sit behind a login wall`);
       return 1;
     }
-    const menu = await client.menu(unit.id, mode);
+    const menu = await client.menu(unit.id, mode, tableCode === undefined ? {} : { tableCode });
     if (menu === null) {
       ports.err(`no menu for unit ${unit.id}`);
       return 1;

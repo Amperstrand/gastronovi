@@ -40,6 +40,7 @@ export const DEAD_UNIT = "2424";
 export const LIVE_KIOSK_CODE = "synthk1";
 export const LIVE_BAR_CODE = "synthb1";
 export const DEAD_CODE = "deadsy1";
+export const BOUND_TABLE_CODE = "TSYNTHTABLE1";
 
 const CSRF_COOKIE = "__Host-csrf_token";
 
@@ -274,6 +275,39 @@ function barPayload(nowSec: number): Record<string, unknown> {
   });
 }
 
+/**
+ * Table-bound catalog (delta 16/23 shape): with a valid tableCode the
+ * costunit-selected cards REPLACE the no-code default — the kiosk card
+ * disappears, the table's own cards appear, table_id_valid is "1".
+ */
+function tableCatalogPayload(nowSec: number): Record<string, unknown> {
+  const recipes: Readonly<Record<string, ReturnType<typeof recipe>>> = {
+    "150090061": recipe("150090061", "7003101", "Synthetic Table Pils", "3.90", "0,4"),
+    "150090062": recipe("150090062", "7003102", "Synthetic Table Water", "1.90", "0,75"),
+    "150090063": recipe("150090063", "7003103", "Synthetic Kommunikation", "0.00", null),
+  };
+  return envelope(nowSec, {
+    table_id_valid: "1",
+    Menusection: [
+      {
+        id: "1900301",
+        title: "Tischkarte",
+        recipe_count: 3,
+        MenusectionContent: [
+          content("160020501", "1900301", recipeAt(recipes, "150090061")),
+          content("160020502", "1900301", recipeAt(recipes, "150090062")),
+          content("160020503", "1900301", recipeAt(recipes, "150090063")),
+        ],
+      },
+    ],
+    Recipe: recipes,
+    RecipeStock: {
+      "1280201": { id: "1280201", recipe_id: "7003101", locked_until: null },
+    },
+    Currency: { id: "1", guid: null, title: "Synthetic Euro", short: "EUR", sign: "€", prec: "2", value: "1.0000000000" },
+  });
+}
+
 function companySettings(): Record<string, unknown> {
   return envelope(Math.floor(Date.now() / 1000), {
     CompanySettings: {
@@ -418,7 +452,22 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
         if (menusAuthorizedCalls >= 1) tokens.clear();
       }
       if (unit === DEAD_UNIT) return jsonResponse(loginWall(nowSec));
-      const type = formType(body);
+      const type = formField(body, "type");
+      const tableCode = formField(body, "tableCode");
+      if (tableCode !== "") {
+        // A table binding is costunit selection: valid code swaps the card
+        // set entirely; an invalid one falls back to the no-code set with
+        // table_id_valid "0" (the widget redirects to overview there).
+        if (tableCode === BOUND_TABLE_CODE) {
+          return jsonResponse(tableCatalogPayload(nowSec));
+        }
+        const fallback = unit === LIVE_KIOSK_UNIT && type === "inhouse"
+          ? kioskInhousePayload(nowSec)
+          : unit === LIVE_KIOSK_UNIT
+            ? kioskPickupPayload(nowSec)
+            : barPayload(nowSec);
+        return jsonResponse({ ...fallback, table_id_valid: "0" });
+      }
       if (unit === LIVE_KIOSK_UNIT) {
         return jsonResponse(type === "inhouse" ? kioskInhousePayload(nowSec) : kioskPickupPayload(nowSec));
       }
@@ -431,7 +480,7 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
   return { fetchImpl, requests, issuedTokens };
 }
 
-function formType(body: string | FormData | null): string {
+function formField(body: string | FormData | null, name: string): string {
   const form = new URLSearchParams(typeof body === "string" ? body : "");
-  return form.get("type") ?? "";
+  return form.get(name) ?? "";
 }

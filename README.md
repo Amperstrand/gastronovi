@@ -29,7 +29,17 @@ CLI (Node 22+):
 npx gastronovi health 7960
 npx gastronovi menu 7960                    # pickup is the default mode
 npx gastronovi menu 96153 --mode inhouse
+npx gastronovi menu 7960 --table T…         # table-bound (costunit) catalog
 ```
+
+Table-bound reads: passing a table capability code (`--table` /
+`menu(unit, mode, { tableCode })`) binds the read to that table's
+costunit — the returned card set is table-selected (typically far larger
+than the no-code default; at 7960 the no-code container-bar card
+disappears and the table's cards appear). `menu.tableIdValid` mirrors
+the wire tri-state: `null` = no code sent, `true` = bound, `false` =
+binding refused (the response then carries the no-code fallback cards).
+Codes are unauthenticated capability strings — read-only use only.
 
 ## Error semantics
 
@@ -81,6 +91,13 @@ card at the same minute), and `menu.gated` flags exactly that.
   gate is hours-dependent — empty during the recon read earlier the same
   day, full at verify time. An empty inhouse read stays a gating signal,
   never a death signal.
+- **table-bound reads (2026-10-05)** — `menu("7960", "inhouse",
+  { tableCode: T… })` with a wayback-archived table code (live-bound six
+  months later): `tableIdValid=true`, 27 cards / 157 items with
+  costunit-selection semantics — the no-code default card absent, the
+  table's cards (HEISSGETRÄNKE, BAR SNACKS) present. A bogus code
+  returns `tableIdValid=false` with the full no-code fallback (32 cards).
+  Bogus + archived codes used from a scratch script only; never in git.
 - **resolver + dead unit (2026-10-04)** — the documented dead sale-code
   for unit 248 resolves via `/code/<x>?format=json` to `unit 248,
   live:false`; its homoglyph variant returns null (invalid-code HTML

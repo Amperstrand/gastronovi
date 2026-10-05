@@ -35,6 +35,16 @@ export interface ClientOptions {
   readonly scanBound?: number;
 }
 
+export interface MenuOptions {
+  /**
+   * Table capability code (`T…`): binds the read to that table's costunit
+   * — the card set is table-selected and typically far larger than the
+   * no-code default. Codes are unauthenticated capability strings; an
+   * invalid one yields tableIdValid:false with the fallback cards.
+   */
+  readonly tableCode?: string;
+}
+
 type CodeOrUnit = { readonly kind: "id"; readonly id: string } | { readonly kind: "code"; readonly code: string };
 
 /**
@@ -103,10 +113,14 @@ export class GastronoviClient {
    * when the unit is live but the mode serves no cards (inhouse without a
    * table code — mode gating, not death).
    */
-  async menu(codeOrUnit: string | UnitId, mode: OrderMode = "pickup"): Promise<Menu | null> {
+  async menu(
+    codeOrUnit: string | UnitId,
+    mode: OrderMode = "pickup",
+    options: MenuOptions = {},
+  ): Promise<Menu | null> {
     const id = await this.resolveInput(codeOrUnit);
     if (id === null) return null;
-    const payload = await this.orderingMenus(id, mode);
+    const payload = await this.orderingMenus(id, mode, options.tableCode);
     if (payload === null || payload.success !== true || this.messageModel(payload) === "login") {
       return null;
     }
@@ -168,11 +182,11 @@ export class GastronoviClient {
     };
   }
 
-  private async orderingMenus(id: UnitId, mode: OrderMode): Promise<RawMenusResponse | null> {
-    let result = await this.menusWithSession(id, mode, await this.sessions.acquire(id));
+  private async orderingMenus(id: UnitId, mode: OrderMode, tableCode: string | undefined): Promise<RawMenusResponse | null> {
+    let result = await this.menusWithSession(id, mode, await this.sessions.acquire(id), tableCode);
     if (this.refused(result)) {
       this.sessions.invalidate(id);
-      result = await this.menusWithSession(id, mode, await this.sessions.acquire(id));
+      result = await this.menusWithSession(id, mode, await this.sessions.acquire(id), tableCode);
       if (this.refused(result)) return null;
     }
     return result.ok ? result.value : null;
@@ -189,6 +203,7 @@ export class GastronoviClient {
     id: UnitId,
     mode: OrderMode,
     session: GuestSession,
+    tableCode: string | undefined,
   ): Promise<Awaited<ReturnType<typeof postForm<RawMenusResponse>>>> {
     return await postForm<RawMenusResponse>({
       unit: id,
@@ -198,6 +213,7 @@ export class GastronoviClient {
         type: mode,
         stripHtml: "1",
         completeDay: "1",
+        ...(tableCode === undefined ? {} : { tableCode }),
       },
       headers: { "x-csrf-token": session.token, cookie: session.cookie },
     }, this.options.fetchImpl);

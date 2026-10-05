@@ -69,6 +69,8 @@ export interface RawMenusResponse {
   readonly Recipe?: Readonly<Record<string, RawRecipe>> | null;
   readonly RecipeStock?: Readonly<Record<string, RawRecipeStockRow>> | null;
   readonly Currency?: RawCurrency | null;
+  /** Tri-state on the wire: absent/null = no tableCode sent, "0" = invalid, "1" = valid. */
+  readonly table_id_valid?: string | number | null;
 }
 
 export interface MenuItem {
@@ -107,6 +109,8 @@ export interface Menu {
   readonly gated: boolean;
   /** Rows in the RecipeStock map — larger than the live card (not a census). */
   readonly stockRows: number;
+  /** null = no tableCode in this read; false = binding refused; true = bound. */
+  readonly tableIdValid: boolean | null;
   readonly updatedAt: string;
 }
 
@@ -163,6 +167,14 @@ function itemFromContent(
   };
 }
 
+function tableBinding(raw: string | number | null | undefined): boolean | null {
+  if (raw === undefined || raw === null) return null;
+  const value = typeof raw === "number" ? String(raw) : raw;
+  if (value === "1") return true;
+  if (value === "0") return false;
+  throw new GastronoviError("parse", `table_id_valid: unknown value "${value}"`);
+}
+
 /** Walks the recursive section tree, one category per section that carries content. */
 export function menuFromPayload(
   unit: UnitId,
@@ -198,6 +210,7 @@ export function menuFromPayload(
     categories,
     gated: categories.length === 0,
     stockRows: stock.size,
+    tableIdValid: tableBinding(payload.table_id_valid),
     updatedAt: now.toISOString(),
   };
 }
