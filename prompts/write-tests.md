@@ -102,3 +102,12 @@ the wire contract, and stay leak-gate clean.
   death. The fake needs an unsolvable-keyPrefix mode and a
   reject-first-N-submits mode, and the client needs a pluggable
   scanBound or the exhaustion lane takes minutes to test.
+- Parity work: strict decimal-string parsing isn't enough for
+  cross-platform identity — product+size+container keys are (the
+  parity engine in platform-recon scripts/parity.ts encodes this
+  package's unitless amounts like "0,33 Bottle"); same-title items
+  differ across POS/aggregator by size and container, never match by
+  title alone.
+- Reuse survey before any sibling package: grep.app the exact
+  hostnames (zero hits = greenfield, hits = existing integrations to
+  verify and build on — see the wolt client's OSS-derived endpoints).
