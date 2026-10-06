@@ -1,6 +1,6 @@
 {
   "name": "gastronovi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-only GastroNova self-ordering client. Menu reads behind the ALTCHA proof-of-work gate. No orders, no payment.",
   "type": "module",
   "license": "MIT",

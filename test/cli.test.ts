@@ -58,8 +58,8 @@ describe("runCli", () => {
     expect(errors[0]).toContain("cannot parse unit or code");
 
     const modeErrors: string[] = [];
-    expect(await runCli(["menu", LIVE_KIOSK_CODE, "--mode", "delivery"], ports([], modeErrors))).toBe(1);
-    expect(modeErrors[0]).toContain("--mode must be pickup or inhouse");
+    expect(await runCli(["menu", LIVE_KIOSK_CODE, "--mode", "eat-in"], ports([], modeErrors))).toBe(1);
+    expect(modeErrors[0]).toContain("--mode must be pickup, inhouse or delivery");
 
     const dead: typeof fetch = (async () => {
       throw new TypeError("fetch failed");
@@ -79,6 +79,19 @@ describe("runCli", () => {
     expect(code).toBe(0);
     expect(lines.join("\n")).toContain("Tischkarte");
     expect(lines.join("\n")).toContain("table binding: valid");
+  });
+
+  it("reads the delivery card via --mode delivery and prints the venue name", async () => {
+    const transport = fakeGastronovi();
+    const lines: string[] = [];
+    const code = await runCli(["menu", LIVE_KIOSK_CODE, "--mode", "delivery"], { ...ports(lines, []), fetchImpl: transport.fetchImpl });
+    expect(code).toBe(0);
+    expect(lines.join("\n")).toContain("deliverect");
+    expect(lines.join("\n")).toContain("Synthetic Deliverect Pils 0,33  3.40 EUR");
+
+    const healthLines: string[] = [];
+    expect(await runCli(["health", LIVE_KIOSK_CODE], { ...ports(healthLines, []), fetchImpl: transport.fetchImpl })).toBe(0);
+    expect(healthLines[0]).toBe("unit 4242 — Synthetic Kiosk");
   });
 
   it("prints usage on help and unknown commands", async () => {

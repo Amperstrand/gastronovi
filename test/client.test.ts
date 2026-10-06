@@ -302,6 +302,37 @@ describe("menu", () => {
     expect(menu?.tableIdValid).toBeNull();
   });
 
+  it("names the unit from the landing page title (offline shell carries it)", async () => {
+    const time = clock();
+    const transport = fake(time);
+    const unit = await client(transport.fetchImpl, time).unit(LIVE_KIOSK_CODE);
+    expect(unit?.name).toBe("Synthetic Kiosk");
+    const landing = transport.requests.find((request) => /\/restaurants\/4242\/?(\?.*)?$/.test(request.url));
+    expect(landing).toBeDefined();
+  });
+
+  it("yields a null name when the landing redirects to a title-less login", async () => {
+    const time = clock();
+    const transport = fake(time);
+    const unit = await client(transport.fetchImpl, time).unit(DEAD_CODE);
+    expect(unit).toMatchObject({ id: DEAD_UNIT, live: false, name: null });
+  });
+
+  it("reads the delivery card (Deliverect bridge) with €0.00 service options as data", async () => {
+    const time = clock();
+    const transport = fake(time);
+    const menu = await client(transport.fetchImpl, time).menu(LIVE_KIOSK_CODE, "delivery");
+    const menus = sent(transport.requests, "/ordering/menus");
+    if (typeof menus?.body === "string") {
+      expect(new URLSearchParams(menus.body).get("type")).toBe("delivery");
+    }
+    expect(menu?.categories.map((category) => category.name)).toEqual(["deliverect"]);
+    const items = menu?.categories[0]?.items ?? [];
+    expect(items.map((item) => item.priceRaw)).toEqual(["3.40", "7.1000000000", "0.00"]);
+    const toggle = items.find((item) => item.title === "Synthetic Bitte Verpacken");
+    expect(toggle).toMatchObject({ price: 0, available: true });
+  });
+
   it("throws a typed network error when the transport dies mid-chain", async () => {
     const dead: typeof fetch = (async () => {
       throw new TypeError("fetch failed");

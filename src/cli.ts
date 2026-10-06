@@ -21,7 +21,7 @@ const USAGE = `gastronovi — read-only GastroNova self-ordering client
 commands:
   health <code>              resolve + cookieless liveness check (no PoW)
   menu <code> [--mode m]     read the menu card set (solves the PoW once)
-                             --mode pickup (default) | inhouse
+                             --mode pickup (default) | inhouse | delivery
   --table <Tcode>            bind the read to a table's costunit catalog
 
 <code> is a unit id (7960), a services.gastronovi.com URL, or a table /
@@ -37,7 +37,7 @@ function processPorts(): CliPorts {
 }
 
 function printUnit(unit: Unit, out: (line: string) => void): void {
-  out(`unit ${unit.id}`);
+  out(`unit ${unit.id}${unit.name === null ? "" : ` — ${unit.name}`}`);
   out(`  live:      ${unit.live ? "yes" : "no (deactivated — challenge success is not liveness)"}`);
   out(`  pickup:    ${unit.pickup ? "enabled" : "off"}`);
   out(`  inhouse:   ${unit.inhouse ? "enabled" : "off"}`);
@@ -66,21 +66,21 @@ function printMenu(menu: Menu, out: (line: string) => void): void {
 interface ParsedArgs {
   readonly command: string | undefined;
   readonly target: string | undefined;
-  readonly mode: "pickup" | "inhouse";
+  readonly mode: "pickup" | "inhouse" | "delivery";
   readonly tableCode: string | undefined;
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs | null {
   let command: string | undefined;
   let target: string | undefined;
-  let mode: "pickup" | "inhouse" = "pickup";
+  let mode: "pickup" | "inhouse" | "delivery" = "pickup";
   let tableCode: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === undefined) break;
     if (arg === "--mode") {
       const value = argv[i + 1];
-      if (value !== "pickup" && value !== "inhouse") return null;
+      if (value !== "pickup" && value !== "inhouse" && value !== "delivery") return null;
       mode = value;
       i += 1;
       continue;
@@ -105,7 +105,7 @@ export async function runCli(
 ): Promise<0 | 1> {
   const args = parseArgs(argv);
   if (args === null) {
-    ports.err("--mode must be pickup or inhouse");
+    ports.err("--mode must be pickup, inhouse or delivery (--table needs a code)");
     ports.err(USAGE);
     return 1;
   }

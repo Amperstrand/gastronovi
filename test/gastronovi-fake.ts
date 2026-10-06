@@ -41,6 +41,10 @@ export const LIVE_KIOSK_CODE = "synthk1";
 export const LIVE_BAR_CODE = "synthb1";
 export const DEAD_CODE = "deadsy1";
 export const BOUND_TABLE_CODE = "TSYNTHTABLE1";
+const LANDING_NAMES: Readonly<Record<string, string>> = {
+  [LIVE_KIOSK_UNIT]: "Synthetic Kiosk",
+  [LIVE_BAR_UNIT]: "Synthetic Bar",
+};
 
 const CSRF_COOKIE = "__Host-csrf_token";
 
@@ -308,6 +312,38 @@ function tableCatalogPayload(nowSec: number): Record<string, unknown> {
   });
 }
 
+/**
+ * Deliverect-bridge card (delta 20 shape): flat `deliverect` catalog
+ * served for type=delivery, incl. the €0.00 service-option recipes the
+ * platform uses as guest toggles (delta 18).
+ */
+function deliverectPayload(nowSec: number): Record<string, unknown> {
+  const recipes: Readonly<Record<string, ReturnType<typeof recipe>>> = {
+    "150090071": recipe("150090071", "7004101", "Synthetic Deliverect Pils", "3.40", "0,33"),
+    "150090072": recipe("150090072", "7004102", "Synthetic Deliverect Ale", "7.1000000000", "0,33"),
+    "150090073": recipe("150090073", "7004103", "Synthetic Bitte Verpacken", "0.00", null),
+  };
+  return envelope(nowSec, {
+    Menusection: [
+      {
+        id: "1900401",
+        title: "deliverect",
+        recipe_count: 3,
+        MenusectionContent: [
+          content("160020601", "1900401", recipeAt(recipes, "150090071")),
+          content("160020602", "1900401", recipeAt(recipes, "150090072")),
+          content("160020603", "1900401", recipeAt(recipes, "150090073")),
+        ],
+      },
+    ],
+    Recipe: recipes,
+    RecipeStock: {
+      "1280301": { id: "1280301", recipe_id: "7004101", locked_until: null },
+    },
+    Currency: { id: "1", guid: null, title: "Synthetic Euro", short: "EUR", sign: "€", prec: "2", value: "1.0000000000" },
+  });
+}
+
 function companySettings(): Record<string, unknown> {
   return envelope(Math.floor(Date.now() / 1000), {
     CompanySettings: {
@@ -366,6 +402,27 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
           },
         }),
       );
+    }
+
+    // Landing pages: live units carry the venue name in <title> even on
+    // the offline shell; deactivated units redirect to /code, whose
+    // login form has no title — the name lane yields null there.
+    const landing = url.pathname.match(/^\/restaurants\/(\d+)\/?$/);
+    if (landing?.[1] !== undefined && method === "GET") {
+      const name = LANDING_NAMES[landing[1]];
+      if (name === undefined) {
+        return new Response("", { status: 302, headers: { location: "/code" } });
+      }
+      return new Response(`<html><head><title>${name}</title></head><body>offline shell</body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=UTF-8" },
+      });
+    }
+    if (url.pathname === "/code" && method === "GET") {
+      return new Response(`<html><body><form>login</form></body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=UTF-8" },
+      });
     }
 
     const unit = url.searchParams.get("api_id") ?? "";
@@ -469,6 +526,7 @@ export function fakeGastronovi(options: FakeGastronoviOptions = {}): {
         return jsonResponse({ ...fallback, table_id_valid: "0" });
       }
       if (unit === LIVE_KIOSK_UNIT) {
+        if (type === "delivery") return jsonResponse(deliverectPayload(nowSec));
         return jsonResponse(type === "inhouse" ? kioskInhousePayload(nowSec) : kioskPickupPayload(nowSec));
       }
       if (unit === LIVE_BAR_UNIT) return jsonResponse(barPayload(nowSec));

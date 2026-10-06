@@ -56,8 +56,8 @@ describe("bin invocation", () => {
   });
 
   it("symlink invocation still refuses unknown commands (runCli really ran)", async () => {
-    const result = await runBin(binLink, ["--mode", "delivery", "menu", "1"]);
+    const result = await runBin(binLink, ["--mode", "eat-in", "menu", "1"]);
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("--mode must be pickup or inhouse");
+    expect(result.stderr).toContain("--mode must be pickup, inhouse or delivery");
   });
 });

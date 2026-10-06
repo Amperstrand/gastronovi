@@ -9,16 +9,18 @@ export function unitId(value: string): UnitId {
   return trimmed as UnitId;
 }
 
-export type OrderMode = "pickup" | "inhouse";
+export type OrderMode = "pickup" | "inhouse" | "delivery";
 
 export function orderMode(value: string): OrderMode {
-  if (value === "pickup" || value === "inhouse") return value;
-  throw new Error(`invalid order mode: ${value} (pickup|inhouse)`);
+  if (value === "pickup" || value === "inhouse" || value === "delivery") return value;
+  throw new Error(`invalid order mode: ${value} (pickup|inhouse|delivery)`);
 }
 
 /** A resolved GastroNova unit. `live` is the cookieless health verdict. */
 export interface Unit {
   readonly id: UnitId;
+  /** Venue name from the landing page title; null when it carries none. */
+  readonly name: string | null;
   readonly live: boolean;
   readonly pickup: boolean;
   readonly inhouse: boolean;

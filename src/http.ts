@@ -86,6 +86,34 @@ export async function fetchJson<T>(
   }
 }
 
+export type FetchTextResult =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly kind: "http" | "network"; readonly status: number; readonly body: string };
+
+export async function fetchText(
+  url: string,
+  init: RequestInit,
+  fetchImpl: typeof fetch = fetch,
+): Promise<FetchTextResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, init);
+  } catch (error) {
+    if (!isTransportFailure(error)) throw error;
+    return {
+      ok: false,
+      kind: "network",
+      status: 0,
+      body: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const text = await response.text();
+  if (!response.ok) {
+    return { ok: false, kind: "http", status: response.status, body: text.slice(0, 500) };
+  }
+  return { ok: true, text };
+}
+
 export interface FormPost {
   readonly unit: string;
   readonly path: string;

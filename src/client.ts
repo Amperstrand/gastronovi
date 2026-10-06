@@ -1,6 +1,6 @@
 import { GastronoviError } from "./error.js";
 import { GuestSessionManager, TOKEN_TTL_MS, type GuestSession } from "./guest-session.js";
-import { baseHeaders, fetchJson, GASTRONOVI_ORIGIN, postForm } from "./http.js";
+import { baseHeaders, fetchJson, fetchText, GASTRONOVI_ORIGIN, postForm, USER_AGENT } from "./http.js";
 import { menuFromPayload, type Menu, type RawMenusResponse } from "./menu.js";
 import type { Pbkdf2Hasher } from "./pow.js";
 import { orderMode, unitId, type OrderMode, type Unit, type UnitId } from "./types.js";
@@ -167,7 +167,7 @@ export class GastronoviClient {
       if (result.kind === "network") {
         throw new GastronoviError("network", `health check failed: ${result.body}`);
       }
-      return { id, live: false, pickup: false, inhouse: false, minOrderValue: null };
+      return { id, name: await this.landingName(id), live: false, pickup: false, inhouse: false, minOrderValue: null };
     }
     const settings = result.value.CompanySettings;
     const flag = (value: string | number | null | undefined): boolean =>
@@ -175,11 +175,33 @@ export class GastronoviClient {
     const min = settings?.minOrderValue;
     return {
       id,
+      name: await this.landingName(id),
       live: result.value.success === true,
       pickup: flag(settings?.usepickup),
       inhouse: flag(settings?.inhouseOrdering),
       minOrderValue: min === undefined || min === null || min === "" ? null : Number(min),
     };
+  }
+
+  /**
+   * The landing page title carries the venue name even on the offline
+   * shell (name lane). Supplementary data: any failure yields null — the
+   * health verdict never depends on it. Only transport death propagates.
+   */
+  private async landingName(id: UnitId): Promise<string | null> {
+    const result = await fetchText(`${GASTRONOVI_ORIGIN}/restaurants/${id}/`, {
+      headers: { "user-agent": USER_AGENT, accept: "text/html" },
+      signal: AbortSignal.timeout(20_000),
+    }, this.options.fetchImpl);
+    if (!result.ok) {
+      if (result.kind === "network") {
+        throw new GastronoviError("network", `landing fetch failed: ${result.body}`);
+      }
+      return null;
+    }
+    const title = result.text.match(/<title>([^<]*)<\/title>/i)?.[1];
+    const name = title?.trim() ?? "";
+    return name === "" ? null : name;
   }
 
   private async orderingMenus(id: UnitId, mode: OrderMode, tableCode: string | undefined): Promise<RawMenusResponse | null> {

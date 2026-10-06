@@ -29,8 +29,16 @@ CLI (Node 22+):
 npx gastronovi health 7960
 npx gastronovi menu 7960                    # pickup is the default mode
 npx gastronovi menu 96153 --mode inhouse
+npx gastronovi menu 96153 --mode delivery   # the Deliverect-bridge card
 npx gastronovi menu 7960 --table T…         # table-bound (costunit) catalog
 ```
+
+`health` names the unit from the landing-page title (carried even by the
+offline shell; null when the landing has none). `--mode delivery` reads
+the Deliverect POS↔aggregator bridge card where the unit serves one —
+the same catalog that feeds Wolt/Lieferando — including the €0.00
+service-option recipes the platform uses as guest toggles; treat those
+as data, never as priced items.
 
 Table-bound reads: passing a table capability code (`--table` /
 `menu(unit, mode, { tableCode })`) binds the read to that table's
@@ -98,6 +106,12 @@ card at the same minute), and `menu.gated` flags exactly that.
   table's cards (HEISSGETRÄNKE, BAR SNACKS) present. A bogus code
   returns `tableIdValid=false` with the full no-code fallback (32 cards).
   Bogus + archived codes used from a scratch script only; never in git.
+- **delivery + naming (2026-10-05, v0.2.0)** — `health` names both units
+  from landing titles (BRLO BRWHOUSE, BRLO Charlottenburg);
+  `menu(96153, "delivery")` reads the Deliverect-bridge catalog:
+  deliverect(41) / merch(3) / bev(21) = 65 items in 11.0 s, incl. the
+  €0.00 service-option recipes ("Beilagen Pommes Lunch",
+  "Beilagensalat Lunch") — matching the platform notes' census exactly.
 - **resolver + dead unit (2026-10-04)** — the documented dead sale-code
   for unit 248 resolves via `/code/<x>?format=json` to `unit 248,
   live:false`; its homoglyph variant returns null (invalid-code HTML
