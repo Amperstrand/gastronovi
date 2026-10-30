@@ -11,6 +11,11 @@ order command in this package on purpose; this platform's payment boundary
 is a hosted checkout a human opens. Worked examples: BRLO BRWHOUSE (unit
 7960) and BRLO Charlottenburg (unit 96153), Berlin.
 
+**Serving status:** deliberately excluded from the gateway's production
+read-engine (its MATRIX out-list) on principle — answering ALTCHA-gated
+menu reads in production would put the proof-of-work cost on the serving
+side. This client exists for research and completeness, not for serving.
+
 ```sh
 npm install github:Amperstrand/gastronovi
 ```
